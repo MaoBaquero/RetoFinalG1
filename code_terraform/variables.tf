@@ -26,12 +26,29 @@ variable "vpc_cidr" {
 
 variable "public_subnet_cidr" {
   type        = string
-  description = "CIDR de la subred pública"
+  description = "CIDR de la subred pública principal (EC2 y ALB AZ-a)"
+}
+
+variable "public_subnet_2_cidr" {
+  type        = string
+  description = "CIDR segunda subred pública — ALB exige mínimo 2 subnets en 2 AZ distintas"
 }
 
 variable "private_subnet_cidr" {
   type        = string
   description = "CIDR de la subred privada reservada"
+}
+
+variable "availability_zone_a" {
+  type        = string
+  description = "Zona de disponibilidad para subred pública principal"
+  default     = "us-east-1a"
+}
+
+variable "availability_zone_b" {
+  type        = string
+  description = "Zona de disponibilidad para segunda subred pública (ALB)"
+  default     = "us-east-1b"
 }
 
 variable "instance_type" {

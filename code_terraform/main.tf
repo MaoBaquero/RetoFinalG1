@@ -36,10 +36,23 @@ resource "aws_vpc" "grupo1" {
 resource "aws_subnet" "publica" {
   vpc_id                  = aws_vpc.grupo1.id
   cidr_block              = var.public_subnet_cidr
+  availability_zone       = var.availability_zone_a
   map_public_ip_on_launch = true
 
   tags = merge(local.common_tags, {
     Name = "${var.name_prefix}-subnet-publica"
+  })
+}
+
+# Segunda subred pública en otra AZ — obligatoria para Application Load Balancer
+resource "aws_subnet" "publica_2" {
+  vpc_id                  = aws_vpc.grupo1.id
+  cidr_block              = var.public_subnet_2_cidr
+  availability_zone       = var.availability_zone_b
+  map_public_ip_on_launch = true
+
+  tags = merge(local.common_tags, {
+    Name = "${var.name_prefix}-subnet-publica-2"
   })
 }
 
@@ -77,6 +90,11 @@ resource "aws_route" "internet" {
 
 resource "aws_route_table_association" "publica" {
   subnet_id      = aws_subnet.publica.id
+  route_table_id = aws_route_table.publica.id
+}
+
+resource "aws_route_table_association" "publica_2" {
+  subnet_id      = aws_subnet.publica_2.id
   route_table_id = aws_route_table.publica.id
 }
 
@@ -165,7 +183,7 @@ resource "aws_lb" "grupo1" {
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
-  subnets            = [aws_subnet.publica.id]
+  subnets            = [aws_subnet.publica.id, aws_subnet.publica_2.id]
 
   tags = merge(local.common_tags, {
     Name = "${var.name_prefix}-alb"

@@ -9,8 +9,13 @@ output "vpc_cidr" {
 }
 
 output "public_subnet_id" {
-  description = "ID de la subred pública"
+  description = "ID de la subred pública principal"
   value       = aws_subnet.publica.id
+}
+
+output "public_subnet_2_id" {
+  description = "ID de la segunda subred pública (ALB AZ-b)"
+  value       = aws_subnet.publica_2.id
 }
 
 output "private_subnet_id" {
