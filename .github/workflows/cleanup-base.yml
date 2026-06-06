@@ -1,0 +1,101 @@
+name: "Cleanup base AWS resources"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/cleanup-base.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  STATE_BUCKET: s3infoiacgrupo1mb
+  LOCK_TABLE: bdinfoiacgrupo1mb
+  IAM_ROLE: ROLIACGRupo1MB
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::573256070386:role/ROLIACGRupo1MB
+          role-session-name: GitHub_cleanup_base
+          aws-region: us-east-1
+
+      - name: Verify Terraform infra removed
+        run: |
+          echo "=== EC2 instances grupo1-* ==="
+          aws ec2 describe-instances \
+            --filters "Name=tag:Project,Values=NetReady" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+            --query 'Reservations[].Instances[].{Id:InstanceId,Name:Tags[?Key==`Name`].Value|[0],State:State.Name}' \
+            --output table || true
+
+          echo "=== Load balancers grupo1-* ==="
+          aws elbv2 describe-load-balancers \
+            --query 'LoadBalancers[?contains(LoadBalancerName, `grupo1`)].{Name:LoadBalancerName,State:State.Code}' \
+            --output table || true
+
+          echo "=== VPCs grupo1-* ==="
+          aws ec2 describe-vpcs \
+            --filters "Name=tag:Project,Values=NetReady" \
+            --query 'Vpcs[].{Id:VpcId,Cidr:CidrBlock,Name:Tags[?Key==`Name`].Value|[0]}' \
+            --output table || true
+
+          INSTANCES=$(aws ec2 describe-instances \
+            --filters "Name=tag:Project,Values=NetReady" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+            --query 'length(Reservations[].Instances[])' --output text)
+          ALBS=$(aws elbv2 describe-load-balancers \
+            --query 'length(LoadBalancers[?contains(LoadBalancerName, `grupo1`)])' --output text)
+          VPCS=$(aws ec2 describe-vpcs \
+            --filters "Name=tag:Project,Values=NetReady" \
+            --query 'length(Vpcs[])' --output text)
+
+          if [ "$INSTANCES" != "0" ] || [ "$ALBS" != "0" ] || [ "$VPCS" != "0" ]; then
+            echo "ERROR: Aún hay infra Terraform activa. Abortando cleanup base."
+            exit 1
+          fi
+          echo "OK: Sin recursos NetReady Terraform en la cuenta."
+
+      - name: Empty and delete S3 state bucket
+        run: |
+          if aws s3api head-bucket --bucket "$STATE_BUCKET" 2>/dev/null; then
+            echo "Vaciando bucket $STATE_BUCKET..."
+            aws s3 rm "s3://$STATE_BUCKET" --recursive || true
+            aws s3api delete-objects --bucket "$STATE_BUCKET" \
+              --delete "$(aws s3api list-object-versions --bucket "$STATE_BUCKET" \
+              --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json 2>/dev/null || echo '{"Objects":[]}')" \
+              2>/dev/null || true
+            aws s3api delete-objects --bucket "$STATE_BUCKET" \
+              --delete "$(aws s3api list-object-versions --bucket "$STATE_BUCKET" \
+              --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json 2>/dev/null || echo '{"Objects":[]}')" \
+              2>/dev/null || true
+            aws s3api delete-bucket --bucket "$STATE_BUCKET"
+            echo "Bucket $STATE_BUCKET eliminado."
+          else
+            echo "Bucket $STATE_BUCKET no existe (ya eliminado)."
+          fi
+
+      - name: Delete DynamoDB lock table
+        run: |
+          if aws dynamodb describe-table --table-name "$LOCK_TABLE" 2>/dev/null; then
+            aws dynamodb delete-table --table-name "$LOCK_TABLE"
+            echo "Esperando eliminación de tabla..."
+            aws dynamodb wait table-not-exists --table-name "$LOCK_TABLE"
+            echo "Tabla $LOCK_TABLE eliminada."
+          else
+            echo "Tabla $LOCK_TABLE no existe (ya eliminada)."
+          fi
+
+      - name: IAM and OIDC (manual en consola)
+        run: |
+          echo "Los siguientes recursos deben eliminarse manualmente en IAM (consola AWS):"
+          echo "  1. Rol $IAM_ROLE — desasociar políticas y eliminar rol"
+          echo "  2. Identity Provider token.actions.githubusercontent.com — eliminar si no lo usa otro repo"
+          echo "El rol del pipeline no puede eliminarse a sí mismo."
